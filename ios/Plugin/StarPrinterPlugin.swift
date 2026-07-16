@@ -212,7 +212,9 @@ private final class DiscoveryDelegateBridge: NSObject, StarDeviceDiscoveryManage
     }
 }
 
-private final class PrinterDelegateBridge: PrinterDelegate {
+// StarIO10's iOS PrinterDelegate is an @objc protocol with optional methods
+// (unlike Android, where it is an abstract class).
+private final class PrinterDelegateBridge: NSObject, PrinterDelegate {
     private let onCommunicationError: (String) -> Void
 
     init(onCommunicationError: @escaping (String) -> Void) {
@@ -220,7 +222,7 @@ private final class PrinterDelegateBridge: PrinterDelegate {
         super.init()
     }
 
-    override func printer(_ printer: StarPrinter, communicationErrorDidOccur error: Error) {
+    func printer(_ printer: StarPrinter, communicationErrorDidOccur error: Error) {
         onCommunicationError(error.localizedDescription)
     }
 }

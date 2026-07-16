@@ -11,12 +11,17 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import com.starmicronics.stario10.InterfaceType
+import com.starmicronics.stario10.PrinterDelegate
 import com.starmicronics.stario10.StarConnectionSettings
 import com.starmicronics.stario10.StarDeviceDiscoveryManager
 import com.starmicronics.stario10.StarDeviceDiscoveryManagerFactory
-import com.starmicronics.stario10.StarIO10CommunicationException
+import com.starmicronics.stario10.StarIO10Exception
 import com.starmicronics.stario10.StarPrinter
-import com.starmicronics.stario10.PrinterDelegate
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 @CapacitorPlugin(
     name = "StarPrinter",
@@ -34,13 +39,16 @@ class StarPrinterPlugin : Plugin() {
         private const val DEFAULT_DISCOVERY_TIMEOUT_MS = 10_000
     }
 
+    // StarIO10's async API returns kotlinx.coroutines.Deferred — run awaits on
+    // a plugin-scoped supervisor so one failed call never kills the scope.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private var discoveryManager: StarDeviceDiscoveryManager? = null
     private var printer: StarPrinter? = null
     private var connected = false
 
-    // StarIO10 officially supports Android 11+ (the AAR may declare a higher
-    // minSdk than the host app; the manifest override keeps the merge green,
-    // this guard keeps runtime behavior honest).
+    // Star officially supports Android 11+; the AAR's own minSdk is lower, so
+    // enforce the documented floor with a clear runtime error.
     private fun unsupportedOsMessage(): String? =
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) "Star printers require Android 11 or newer" else null
 
@@ -134,23 +142,24 @@ class StarPrinterPlugin : Plugin() {
         val settings = StarConnectionSettings(InterfaceType.Bluetooth, identifier)
         val newPrinter = StarPrinter(settings, context)
         newPrinter.printerDelegate = object : PrinterDelegate() {
-            override fun onCommunicationError(e: StarIO10CommunicationException) {
+            override fun onCommunicationError(e: StarIO10Exception) {
                 val payload = JSObject()
                 payload.put("message", e.message ?: "communication error")
                 notifyListeners("communicationError", payload)
             }
         }
 
-        newPrinter.openAsync().whenComplete { _, error ->
-            if (error != null) {
-                connected = false
-                printer = null
-                call.reject("Failed to connect: ${error.cause?.message ?: error.message}")
-            } else {
+        scope.launch {
+            try {
+                newPrinter.openAsync().await()
                 printer = newPrinter
                 connected = true
                 notifyListeners("connected", JSObject())
                 call.resolve()
+            } catch (e: Exception) {
+                connected = false
+                printer = null
+                call.reject("Failed to connect: ${e.message}")
             }
         }
     }
@@ -160,12 +169,13 @@ class StarPrinterPlugin : Plugin() {
         printer = null
         val wasConnected = connected
         connected = false
-        try {
-            current.closeAsync().whenComplete { _, _ ->
-                if (wasConnected) notifyListeners("disconnected", JSObject())
+        scope.launch {
+            try {
+                current.closeAsync().await()
+            } catch (_: Exception) {
+                // best-effort close
             }
-        } catch (_: Exception) {
-            // best-effort close
+            if (wasConnected) notifyListeners("disconnected", JSObject())
         }
     }
 
@@ -203,11 +213,12 @@ class StarPrinterPlugin : Plugin() {
             return
         }
 
-        current.printRawDataAsync(bytes).whenComplete { _, error ->
-            if (error != null) {
-                call.reject("Print failed: ${error.cause?.message ?: error.message}")
-            } else {
+        scope.launch {
+            try {
+                current.printRawDataAsync(bytes).await()
                 call.resolve()
+            } catch (e: Exception) {
+                call.reject("Print failed: ${e.message}")
             }
         }
     }
@@ -219,10 +230,9 @@ class StarPrinterPlugin : Plugin() {
             call.reject("Not connected to a printer")
             return
         }
-        current.getStatusAsync().whenComplete { status, error ->
-            if (error != null || status == null) {
-                call.reject("Failed to read status: ${error?.cause?.message ?: error?.message ?: "unknown"}")
-            } else {
+        scope.launch {
+            try {
+                val status = current.getStatusAsync().await()
                 val result = JSObject()
                 result.put("online", !status.hasError)
                 result.put("hasError", status.hasError)
@@ -230,6 +240,8 @@ class StarPrinterPlugin : Plugin() {
                 result.put("paperNearEmpty", status.paperNearEmpty)
                 result.put("coverOpen", status.coverOpen)
                 call.resolve(result)
+            } catch (e: Exception) {
+                call.reject("Failed to read status: ${e.message}")
             }
         }
     }
@@ -242,6 +254,7 @@ class StarPrinterPlugin : Plugin() {
         }
         discoveryManager = null
         closeCurrentPrinter()
+        scope.cancel()
         super.handleOnDestroy()
     }
 }
