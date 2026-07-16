@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- StarIO10 officially supports Android 11+ and its AAR may declare a
+         minSdk above the host app's. The override keeps the manifest merge
+         green; the plugin rejects at runtime on pre-Android-11 devices. -->
+    <uses-sdk tools:overrideLibrary="com.starmicronics.stario10" />
+</manifest>

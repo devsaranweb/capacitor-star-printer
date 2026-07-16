@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.DS_Store
+ios/Plugin/build/
+android/build/
+android/.gradle/
+# dist/ is COMMITTED on purpose — the package is installed from git, so there
+# is no publish step to build it.
