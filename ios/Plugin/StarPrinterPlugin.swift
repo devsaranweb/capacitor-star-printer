@@ -20,6 +20,7 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "disconnect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "isConnected", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "printRaw", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "printText", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getStatus", returnType: CAPPluginReturnPromise)
     ]
 
@@ -162,6 +163,42 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
                 // StarXpand manual: raw/binary printing on iOS. If the SDK
                 // renames this entry point, this is the single line to adjust.
                 try await current.print(raw: data)
+                call.resolve()
+            } catch {
+                call.reject("Print failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @objc func printText(_ call: CAPPluginCall) {
+        guard let current = printer, connected else {
+            call.reject("Not connected to a printer")
+            return
+        }
+        guard let text = call.getString("text"), !text.isEmpty else {
+            call.reject("text is required")
+            return
+        }
+
+        // DocumentBuilder path: the SDK renders per-model, so graphics-only
+        // printers (TSP100III in factory Star Graphic Mode) rasterize the text
+        // instead of silently dropping raw text-mode commands.
+        let printerBuilder = StarXpandCommand.PrinterBuilder().actionPrintText(text)
+        switch call.getString("cut") ?? "partial" {
+        case "none":
+            break
+        case "full":
+            _ = printerBuilder.actionCut(.full)
+        default:
+            _ = printerBuilder.actionCut(.partial)
+        }
+        let commands = StarXpandCommand.StarXpandCommandBuilder()
+            .addDocument(StarXpandCommand.DocumentBuilder().addPrinter(printerBuilder))
+            .getCommands()
+
+        Task {
+            do {
+                try await current.print(command: commands)
                 call.resolve()
             } catch {
                 call.reject("Print failed: \(error.localizedDescription)")

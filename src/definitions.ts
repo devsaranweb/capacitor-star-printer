@@ -54,8 +54,26 @@ export interface StarPrinterPlugin {
   /**
    * Send raw command bytes (e.g. StarPRNT output from a receipt encoder)
    * straight to the connected printer.
+   *
+   * CAVEAT: TSP100III-series printers ship in Star Graphic Mode, where raw
+   * text-mode StarPRNT may print nothing until the printer's emulation is
+   * switched to StarPRNT. `printText()` works regardless of emulation.
    */
   printRaw(options: { data: number[] }): Promise<void>;
+
+  /**
+   * Print plain text through the StarXpand DocumentBuilder pipeline.
+   *
+   * Unlike `printRaw`, the SDK renders the document appropriately for the
+   * connected model — on graphics-only printers (TSP100III series in factory
+   * Star Graphic Mode) the text is rasterized, so this path prints correctly
+   * without a printer emulation switch. Use it as the fallback / spike probe
+   * when raw StarPRNT output comes out blank.
+   *
+   * @param options.text text to print (may contain \n line breaks)
+   * @param options.cut  paper cut after printing: 'partial' (default), 'full', or 'none'
+   */
+  printText(options: { text: string; cut?: 'partial' | 'full' | 'none' }): Promise<void>;
 
   /** Read the connected printer's hardware status. */
   getStatus(): Promise<StarPrinterStatusResult>;

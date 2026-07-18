@@ -17,6 +17,10 @@ import com.starmicronics.stario10.StarDeviceDiscoveryManager
 import com.starmicronics.stario10.StarDeviceDiscoveryManagerFactory
 import com.starmicronics.stario10.StarIO10Exception
 import com.starmicronics.stario10.StarPrinter
+import com.starmicronics.stario10.starxpandcommand.DocumentBuilder
+import com.starmicronics.stario10.starxpandcommand.PrinterBuilder
+import com.starmicronics.stario10.starxpandcommand.StarXpandCommandBuilder
+import com.starmicronics.stario10.starxpandcommand.printer.CutType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -216,6 +220,43 @@ class StarPrinterPlugin : Plugin() {
         scope.launch {
             try {
                 current.printRawDataAsync(bytes).await()
+                call.resolve()
+            } catch (e: Exception) {
+                call.reject("Print failed: ${e.message}")
+            }
+        }
+    }
+
+    @PluginMethod
+    fun printText(call: PluginCall) {
+        val current = printer
+        if (current == null || !connected) {
+            call.reject("Not connected to a printer")
+            return
+        }
+        val text = call.getString("text")
+        if (text.isNullOrEmpty()) {
+            call.reject("text is required")
+            return
+        }
+        val cut: CutType? = when (call.getString("cut") ?: "partial") {
+            "none" -> null
+            "full" -> CutType.Full
+            else -> CutType.Partial
+        }
+
+        // DocumentBuilder path: the SDK renders per-model, so graphics-only
+        // printers (TSP100III in factory Star Graphic Mode) rasterize the text
+        // instead of silently dropping raw text-mode commands.
+        val printerBuilder = PrinterBuilder().actionPrintText(text)
+        if (cut != null) printerBuilder.actionCut(cut)
+        val commands = StarXpandCommandBuilder()
+            .addDocument(DocumentBuilder().addPrinter(printerBuilder))
+            .getCommands()
+
+        scope.launch {
+            try {
+                current.printAsync(commands).await()
                 call.resolve()
             } catch (e: Exception) {
                 call.reject("Print failed: ${e.message}")

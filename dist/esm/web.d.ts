@@ -13,5 +13,6 @@ export declare class StarPrinterWeb extends WebPlugin implements StarPrinterPlug
         connected: boolean;
     }>;
     printRaw(): Promise<void>;
+    printText(): Promise<void>;
     getStatus(): Promise<StarPrinterStatusResult>;
 }
