@@ -34,6 +34,9 @@ class StarPrinterWeb extends core.WebPlugin {
     async printText() {
         throw this.unavailable('StarPrinter is not available on web.');
     }
+    async printImage() {
+        throw this.unavailable('StarPrinter is not available on web.');
+    }
     async getStatus() {
         throw this.unavailable('StarPrinter is not available on web.');
     }

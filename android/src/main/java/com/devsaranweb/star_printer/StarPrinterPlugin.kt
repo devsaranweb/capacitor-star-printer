@@ -18,9 +18,13 @@ import com.starmicronics.stario10.StarDeviceDiscoveryManagerFactory
 import com.starmicronics.stario10.StarIO10Exception
 import com.starmicronics.stario10.StarPrinter
 import com.starmicronics.stario10.starxpandcommand.DocumentBuilder
+import com.starmicronics.stario10.starxpandcommand.DrawerBuilder
 import com.starmicronics.stario10.starxpandcommand.PrinterBuilder
 import com.starmicronics.stario10.starxpandcommand.StarXpandCommandBuilder
+import com.starmicronics.stario10.starxpandcommand.drawer.Channel
+import com.starmicronics.stario10.starxpandcommand.drawer.OpenParameter
 import com.starmicronics.stario10.starxpandcommand.printer.CutType
+import com.starmicronics.stario10.starxpandcommand.printer.ImageParameter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -252,6 +256,62 @@ class StarPrinterPlugin : Plugin() {
         if (cut != null) printerBuilder.actionCut(cut)
         val commands = StarXpandCommandBuilder()
             .addDocument(DocumentBuilder().addPrinter(printerBuilder))
+            .getCommands()
+
+        scope.launch {
+            try {
+                current.printAsync(commands).await()
+                call.resolve()
+            } catch (e: Exception) {
+                call.reject("Print failed: ${e.message}")
+            }
+        }
+    }
+
+    @PluginMethod
+    fun printImage(call: PluginCall) {
+        val current = printer
+        if (current == null || !connected) {
+            call.reject("Not connected to a printer")
+            return
+        }
+        val encoded = call.getString("image")
+        if (encoded.isNullOrEmpty()) {
+            call.reject("image is required")
+            return
+        }
+
+        val bitmap: android.graphics.Bitmap
+        try {
+            val bytes = android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+            bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ?: run {
+                    call.reject("image is not a decodable bitmap")
+                    return
+                }
+        } catch (e: Exception) {
+            call.reject("image must be a base64-encoded PNG: ${e.message}")
+            return
+        }
+
+        val width = call.getInt("width") ?: bitmap.width
+        val cut: CutType? = when (call.getString("cut") ?: "partial") {
+            "none" -> null
+            "full" -> CutType.Full
+            else -> CutType.Partial
+        }
+
+        // DocumentBuilder image path: the SDK converts to the connected model's
+        // native raster commands — the only path graphics-only printers
+        // (TSP100III series) can print at all.
+        val printerBuilder = PrinterBuilder().actionPrintImage(ImageParameter(bitmap, width))
+        if (cut != null) printerBuilder.actionCut(cut)
+        val documentBuilder = DocumentBuilder().addPrinter(printerBuilder)
+        if (call.getBoolean("openDrawer") == true) {
+            documentBuilder.addDrawer(DrawerBuilder().actionOpen(OpenParameter().setChannel(Channel.No1)))
+        }
+        val commands = StarXpandCommandBuilder()
+            .addDocument(documentBuilder)
             .getCommands()
 
         scope.launch {

@@ -53,9 +53,12 @@ export interface StarPrinterPlugin {
      * Send raw command bytes (e.g. StarPRNT output from a receipt encoder)
      * straight to the connected printer.
      *
-     * CAVEAT: TSP100III-series printers ship in Star Graphic Mode, where raw
-     * text-mode StarPRNT may print nothing until the printer's emulation is
-     * switched to StarPRNT. `printText()` works regardless of emulation.
+     * CAVEAT: TSP100III-series printers are GRAPHICS-ONLY — they have no
+     * text-mode command interpreter at all (StarPRNT text emulation only exists
+     * from TSP100IV onward; there is no emulation switch on a TSP100III). Raw
+     * text-mode StarPRNT bytes are silently discarded: the call resolves and
+     * nothing prints. Use `printImage()` (or `printText()`) for those models —
+     * the StarXpand DocumentBuilder pipeline rasterizes per-model.
      */
     printRaw(options: {
         data: number[];
@@ -75,6 +78,26 @@ export interface StarPrinterPlugin {
     printText(options: {
         text: string;
         cut?: 'partial' | 'full' | 'none';
+    }): Promise<void>;
+    /**
+     * Print a raster image through the StarXpand DocumentBuilder pipeline.
+     *
+     * This is THE print path for graphics-only printers (TSP100III series): the
+     * SDK converts the document to the model's native raster commands, so it
+     * prints on every supported Star model regardless of emulation. Render the
+     * receipt to a bitmap app-side (e.g. a canvas) and pass it here.
+     *
+     * @param options.image      base64-encoded PNG (no `data:` prefix)
+     * @param options.width      print width in dots (576 = 80mm @ 203dpi,
+     *                           384 = 58mm); defaults to the image's own width
+     * @param options.cut        paper cut after printing: 'partial' (default), 'full', or 'none'
+     * @param options.openDrawer kick the cash drawer after printing (default false)
+     */
+    printImage(options: {
+        image: string;
+        width?: number;
+        cut?: 'partial' | 'full' | 'none';
+        openDrawer?: boolean;
     }): Promise<void>;
     /** Read the connected printer's hardware status. */
     getStatus(): Promise<StarPrinterStatusResult>;

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Capacitor
 import StarIO10
 
@@ -21,6 +22,7 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "isConnected", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "printRaw", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "printText", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "printImage", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getStatus", returnType: CAPPluginReturnPromise)
     ]
 
@@ -194,6 +196,55 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         let commands = StarXpandCommand.StarXpandCommandBuilder()
             .addDocument(StarXpandCommand.DocumentBuilder().addPrinter(printerBuilder))
+            .getCommands()
+
+        Task {
+            do {
+                try await current.print(command: commands)
+                call.resolve()
+            } catch {
+                call.reject("Print failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @objc func printImage(_ call: CAPPluginCall) {
+        guard let current = printer, connected else {
+            call.reject("Not connected to a printer")
+            return
+        }
+        guard let encoded = call.getString("image"), !encoded.isEmpty,
+              let data = Data(base64Encoded: encoded),
+              let image = UIImage(data: data) else {
+            call.reject("image must be a base64-encoded PNG")
+            return
+        }
+
+        let width = call.getInt("width") ?? Int(image.size.width)
+        let cut: StarXpandCommand.Printer.CutType? = {
+            switch call.getString("cut") ?? "partial" {
+            case "none": return nil
+            case "full": return .full
+            default: return .partial
+            }
+        }()
+
+        // DocumentBuilder image path: the SDK converts to the connected model's
+        // native raster commands — the only path graphics-only printers
+        // (TSP100III series) can print at all.
+        let printerBuilder = StarXpandCommand.PrinterBuilder()
+            .actionPrintImage(StarXpandCommand.Printer.ImageParameter(image: image, width: width))
+        if let cut = cut {
+            _ = printerBuilder.actionCut(cut)
+        }
+        let documentBuilder = StarXpandCommand.DocumentBuilder().addPrinter(printerBuilder)
+        if call.getBool("openDrawer") == true {
+            _ = documentBuilder.addDrawer(
+                StarXpandCommand.DrawerBuilder().actionOpen(StarXpandCommand.Drawer.OpenParameter().setChannel(.no1))
+            )
+        }
+        let commands = StarXpandCommand.StarXpandCommandBuilder()
+            .addDocument(documentBuilder)
             .getCommands()
 
         Task {

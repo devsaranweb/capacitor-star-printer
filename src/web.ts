@@ -28,6 +28,9 @@ export class StarPrinterWeb extends WebPlugin implements StarPrinterPlugin {
   async printText(): Promise<void> {
     throw this.unavailable('StarPrinter is not available on web.');
   }
+  async printImage(): Promise<void> {
+    throw this.unavailable('StarPrinter is not available on web.');
+  }
   async getStatus(): Promise<StarPrinterStatusResult> {
     throw this.unavailable('StarPrinter is not available on web.');
   }
