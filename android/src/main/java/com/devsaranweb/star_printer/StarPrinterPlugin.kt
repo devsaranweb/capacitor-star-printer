@@ -37,6 +37,15 @@ import kotlinx.coroutines.launch
         Permission(
             alias = StarPrinterPlugin.BLUETOOTH_ALIAS,
             strings = [Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN]
+        ),
+        // API <= 30 only. StarIO10 discovery is Bluetooth CLASSIC discovery,
+        // which returns ZERO devices on API 30 without a granted runtime
+        // location permission (`neverForLocation` only decouples the two from
+        // API 31). Android 11 (API 30) is the one pre-31 release this plugin
+        // supports, so without this a scan there silently finds nothing.
+        Permission(
+            alias = StarPrinterPlugin.LOCATION_ALIAS,
+            strings = [Manifest.permission.ACCESS_FINE_LOCATION]
         )
     ]
 )
@@ -44,6 +53,7 @@ class StarPrinterPlugin : Plugin() {
 
     companion object {
         const val BLUETOOTH_ALIAS = "bluetooth"
+        const val LOCATION_ALIAS = "location"
         private const val DEFAULT_DISCOVERY_TIMEOUT_MS = 10_000
     }
 
@@ -60,25 +70,42 @@ class StarPrinterPlugin : Plugin() {
     private fun unsupportedOsMessage(): String? =
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) "Star printers require Android 11 or newer" else null
 
-    private fun hasBluetoothPermission(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.S || getPermissionState(BLUETOOTH_ALIAS) == PermissionState.GRANTED
+    /**
+     * The permission alias this OS level actually needs, or null when nothing
+     * has to be requested.
+     *
+     * - API 31+: BLUETOOTH_SCAN / BLUETOOTH_CONNECT (declared `neverForLocation`
+     *   by the host, so no location permission is involved).
+     * - API 30: the runtime BT permissions don't exist yet, but Bluetooth
+     *   CLASSIC discovery yields ZERO results without ACCESS_FINE_LOCATION.
+     */
+    private fun requiredPermissionAlias(): String? = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+            if (getPermissionState(BLUETOOTH_ALIAS) == PermissionState.GRANTED) null else BLUETOOTH_ALIAS
+        else ->
+            if (getPermissionState(LOCATION_ALIAS) == PermissionState.GRANTED) null else LOCATION_ALIAS
+    }
 
     private fun withBluetoothPermission(call: PluginCall, action: () -> Unit) {
         unsupportedOsMessage()?.let {
             call.reject(it)
             return
         }
-        if (hasBluetoothPermission()) {
+        val alias = requiredPermissionAlias()
+        if (alias == null) {
             action()
         } else {
-            requestPermissionForAlias(BLUETOOTH_ALIAS, call, "bluetoothPermissionCallback")
+            requestPermissionForAlias(alias, call, "bluetoothPermissionCallback")
         }
     }
 
     @PermissionCallback
     private fun bluetoothPermissionCallback(call: PluginCall) {
-        if (!hasBluetoothPermission()) {
-            call.reject("Bluetooth permission denied")
+        if (requiredPermissionAlias() != null) {
+            call.reject(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "Bluetooth permission denied"
+                else "Location permission denied — Android 11 needs it to discover Bluetooth printers"
+            )
             return
         }
         when (call.methodName) {

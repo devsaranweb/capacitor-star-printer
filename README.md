@@ -40,6 +40,11 @@ Events: `printerFound`, `discoveryFinished`, `connected`, `disconnected`, `commu
   `UISupportedExternalAccessoryProtocols` = `jp.star-m.starpro` in Info.plist.
 - **Android**: the plugin runtime-requests `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT`
   (API 31+). The host manifest must declare them (Capacitor default templates do).
+  On **API 30 (Android 11)** — the one pre-31 release Star supports — those runtime
+  permissions don't exist yet, but Bluetooth *Classic* discovery returns ZERO devices
+  without a granted `ACCESS_FINE_LOCATION`. Since v0.2.1 the plugin declares that
+  permission (`maxSdkVersion="30"`) and requests it there; without it a scan on
+  Android 11 silently finds nothing.
 - **TSP100III is graphics-only**: the TSP100III line has **no text-mode command
   interpreter at all** — StarPRNT text emulation only exists from the TSP100IV
   onward, and there is **no emulation switch** on a TSP100III (an earlier version of
@@ -52,7 +57,7 @@ Events: `printerFound`, `discoveryFinished`, `connected`, `disconnected`, `commu
 ## Install
 
 ```sh
-npm i github:devsaranweb/capacitor-star-printer#v0.2.0
+npm i github:devsaranweb/capacitor-star-printer#v0.2.1
 npx cap sync
 ```
 

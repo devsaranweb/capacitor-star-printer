@@ -3,4 +3,16 @@
     <!-- stario10 1.12.1's AAR declares minSdk 26 (verified), so no
          tools:overrideLibrary is needed. Star's OFFICIAL support floor is
          Android 11 — the plugin enforces that at runtime with a clear error. -->
+
+    <!-- Bluetooth CLASSIC discovery (what StarIO10 uses to find printers)
+         returns ZERO devices on API <= 30 without a GRANTED runtime location
+         permission; `neverForLocation` only decouples scanning from location
+         from API 31 onward. Android 11 (API 30) is the one pre-31 release this
+         plugin supports, so it must be able to request it there. Scoped to
+         maxSdkVersion 30, so API 31+ builds carry no location permission and
+         need no Play location justification. Host apps that already declare it
+         identically (pos_app / kds_app / partner_app) merge cleanly. -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
 </manifest>
