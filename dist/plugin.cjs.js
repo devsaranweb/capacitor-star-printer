@@ -9,8 +9,9 @@ const StarPrinter = core.registerPlugin('StarPrinter', {
 });
 
 /**
- * Web stub — Star Bluetooth printers are native-only.
- * Every method rejects with `unavailable()` so callers can feature-detect.
+ * Web stub — Star printers are native-only on every interface (Bluetooth and,
+ * on Android, USB). Every method rejects with `unavailable()` so callers can
+ * feature-detect.
  */
 class StarPrinterWeb extends core.WebPlugin {
     async discover() {

@@ -1,16 +1,36 @@
 import type { PluginListenerHandle } from '@capacitor/core';
 /**
+ * Transport the plugin reaches a Star printer over.
+ *
+ * `usb` is ANDROID-ONLY: the iOS StarXpand SDK has no usable USB interface
+ * (MFi/Lightning), so the iOS side accepts the option and refuses it.
+ *
+ * BACKWARD COMPATIBILITY: an OMITTED interface means `bluetooth` everywhere —
+ * on the wire and in the native code — so a v0.2.x caller is unaffected.
+ */
+export type StarPrinterInterface = 'bluetooth' | 'usb';
+/**
  * A Star printer found during discovery.
  *
- * `identifier` is opaque to callers: the Bluetooth MAC address on Android and
- * the External Accessory identifier on iOS. Pass it back to `connect()`.
+ * `identifier` is opaque to callers: the Bluetooth MAC address (Android
+ * Bluetooth), the External Accessory identifier (iOS), or the USB SERIAL
+ * NUMBER (Android USB). Pass it back to `connect()`.
  */
 export interface StarPrinterDeviceInfo {
+    /**
+     * See above. A USB printer may report a BLANK serial (observed on TSP100
+     * units); passing an empty identifier back on the `usb` interface addresses
+     * "the printer that is currently plugged in" (StarIO10's
+     * `StarConnectionSettings.FIRST_FOUND_DEVICE`). Only ONE serial-less USB
+     * printer is addressable that way.
+     */
     identifier: string;
     /** Printer model name as reported by StarIO10 (e.g. "TSP143III"), if known. */
     model?: string;
-    /** Interface the printer was found on. Always "bluetooth" for this plugin. */
-    interface: string;
+    /** Interface the printer was found on. Omitted by pre-0.3.0 binaries = bluetooth. */
+    interface?: StarPrinterInterface;
+    /** Android USB only: the SDK's port name — a display hint for a serial-less unit. */
+    portName?: string;
 }
 /**
  * Snapshot of the connected printer's hardware status.
@@ -24,24 +44,39 @@ export interface StarPrinterStatusResult {
 }
 export interface StarPrinterPlugin {
     /**
-     * Start Bluetooth discovery. Found printers are emitted via the
-     * `printerFound` event; `discoveryFinished` fires when the scan ends.
+     * Start discovery. Found printers are emitted via the `printerFound` event;
+     * `discoveryFinished` fires when the scan ends.
      *
-     * Android: classic Bluetooth discovery via StarIO10 (runtime
-     * BLUETOOTH_SCAN/BLUETOOTH_CONNECT permissions are requested by the plugin).
+     * Android Bluetooth: classic Bluetooth discovery via StarIO10 (runtime
+     * BLUETOOTH_SCAN/BLUETOOTH_CONNECT — or ACCESS_FINE_LOCATION on API 30 —
+     * are requested by the plugin).
+     * Android USB: enumerates printers on the USB host port. Returns instantly,
+     * needs no runtime permission from the plugin (StarIO10 owns the USB
+     * permission dialog), and only sees a printer that is plugged in AND powered.
      * iOS: lists MFi printers already paired in Settings > Bluetooth — there is
-     * no in-app scan on iOS.
+     * no in-app scan on iOS, and a USB-only request finds nothing.
      *
-     * @param options.timeoutMs discovery window in ms (default 10000)
+     * @param options.timeoutMs  discovery window in ms (default 10000)
+     * @param options.interfaces interfaces to scan (default `['bluetooth']`);
+     *                           `'usb'` is Android-only
      */
     discover(options?: {
         timeoutMs?: number;
+        interfaces?: StarPrinterInterface[];
     }): Promise<void>;
     /** Stop an in-progress discovery. No-op when none is running. */
     stopDiscovery(): Promise<void>;
-    /** Open a session to the printer with the given identifier. */
+    /**
+     * Open a session to the printer with the given identifier.
+     *
+     * @param options.interface  transport (default `'bluetooth'`). `'usb'` is
+     *                           Android-only and is the ONLY interface that
+     *                           accepts an empty `identifier` — see
+     *                           {@link StarPrinterDeviceInfo.identifier}.
+     */
     connect(options: {
         identifier: string;
+        interface?: StarPrinterInterface;
     }): Promise<void>;
     /** Close the current printer session. No-op when not connected. */
     disconnect(): Promise<void>;

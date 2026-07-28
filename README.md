@@ -1,9 +1,10 @@
 # @aybinv7/capacitor-star-printer
 
 Minimal Capacitor plugin for **Star Micronics** receipt printers via the official
-**StarXpand SDK (StarIO10)**. Provides the Bluetooth transport the generic
-BLE/ESC-POS plugins cannot: **Bluetooth Classic SPP on Android** and **MFi/iAP2 on
-iOS** — required by e.g. the TSP143IIIBI (TSP100III Bluetooth).
+**StarXpand SDK (StarIO10)**. Provides the transports the generic BLE/ESC-POS
+plugins cannot: **Bluetooth Classic SPP on Android**, **MFi/iAP2 on iOS**, and
+(v0.3.0+) **USB on Android** — required by e.g. the TSP143IIIBI (TSP100III
+Bluetooth) and the TSP143U / TSP100 futurePRNT ECO (USB).
 
 Two print paths:
 
@@ -21,9 +22,11 @@ Two print paths:
 ```ts
 import { StarPrinter } from '@aybinv7/capacitor-star-printer';
 
-await StarPrinter.addListener('printerFound', (p) => console.log(p.identifier, p.model));
-await StarPrinter.discover({ timeoutMs: 10000 }); // fires printerFound / discoveryFinished
-await StarPrinter.connect({ identifier });        // BT MAC (Android) / EA identifier (iOS)
+await StarPrinter.addListener('printerFound', (p) => console.log(p.identifier, p.model, p.interface));
+await StarPrinter.discover({ timeoutMs: 10000 });                    // Bluetooth (default)
+await StarPrinter.discover({ interfaces: ['usb'], timeoutMs: 3000 }); // Android USB
+await StarPrinter.connect({ identifier });                           // BT MAC (Android) / EA identifier (iOS)
+await StarPrinter.connect({ identifier: serial, interface: 'usb' }); // Android USB; '' = the plugged-in printer
 await StarPrinter.printImage({ image: base64Png, width: 576, cut: 'partial' }); // raster path (all models)
 await StarPrinter.printRaw({ data: Array.from(encodedBytes) });                 // byte pipe (text-mode models only)
 await StarPrinter.printText({ text: 'Hello from StarXpand\n', cut: 'partial' }); // plain-text DocumentBuilder path
@@ -38,6 +41,19 @@ Events: `printerFound`, `discoveryFinished`, `connected`, `disconnected`, `commu
 - **iOS**: MFi printers must first be paired in **Settings → Bluetooth**. `discover()`
   lists paired accessories; there is no in-app scan. The host app must declare
   `UISupportedExternalAccessoryProtocols` = `jp.star-m.starpro` in Info.plist.
+  **USB is Android-only** — MFi/Lightning makes it non-viable here, so iOS accepts
+  the `interface` / `interfaces` options and refuses `usb` (a USB-only `discover()`
+  resolves and finds nothing).
+- **Android USB (v0.3.0+)**: the host manifest must declare
+  `<uses-feature android:name="android.hardware.usb.host" android:required="false" />`.
+  The plugin requests **no** runtime permission for USB — StarIO10 registers its own
+  `USB_PERMISSION` receiver, so the SDK drives the system dialog on first open (and
+  again after a re-plug, since Android revokes USB permission on detach). The
+  identifier for a USB printer is its **USB serial number**, which some TSP100 units
+  report **blank**; pass an empty identifier back to address "whatever is plugged in"
+  (`StarConnectionSettings.FIRST_FOUND_DEVICE`). Only one serial-less USB printer is
+  addressable that way. A USB printer is only discoverable while plugged in *and*
+  powered on.
 - **Android**: the plugin runtime-requests `BLUETOOTH_SCAN` / `BLUETOOTH_CONNECT`
   (API 31+). The host manifest must declare them (Capacitor default templates do).
   On **API 30 (Android 11)** — the one pre-31 release Star supports — those runtime
@@ -57,7 +73,7 @@ Events: `printerFound`, `discoveryFinished`, `connected`, `disconnected`, `commu
 ## Install
 
 ```sh
-npm i github:devsaranweb/capacitor-star-printer#v0.2.1
+npm i github:devsaranweb/capacitor-star-printer#v0.3.0
 npx cap sync
 ```
 

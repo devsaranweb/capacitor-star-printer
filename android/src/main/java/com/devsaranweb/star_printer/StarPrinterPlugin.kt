@@ -55,6 +55,46 @@ class StarPrinterPlugin : Plugin() {
         const val BLUETOOTH_ALIAS = "bluetooth"
         const val LOCATION_ALIAS = "location"
         private const val DEFAULT_DISCOVERY_TIMEOUT_MS = 10_000
+
+        // JS-facing interface names. These literals are what callers compare
+        // against, so they are lowercase and must never be derived from the
+        // enum (InterfaceType.toString() is capitalised — "Bluetooth").
+        private const val IFACE_BLUETOOTH = "bluetooth"
+        private const val IFACE_USB = "usb"
+    }
+
+    /**
+     * JS interface name -> StarIO10 enum.
+     *
+     * An absent/empty value means Bluetooth, so a v0.2.x caller that never
+     * sends the option behaves exactly as before. An UNKNOWN value returns
+     * null and the caller rejects — never a silent fallback, which would
+     * connect a typo'd interface to the wrong transport.
+     */
+    private fun interfaceOf(value: String?): InterfaceType? = when (value?.lowercase()) {
+        IFACE_USB -> InterfaceType.Usb
+        IFACE_BLUETOOTH, null, "" -> InterfaceType.Bluetooth
+        else -> null
+    }
+
+    /** StarIO10 enum -> JS interface name. See the IFACE_* note above. */
+    private fun interfaceName(type: InterfaceType): String =
+        if (type == InterfaceType.Usb) IFACE_USB else IFACE_BLUETOOTH
+
+    /**
+     * The interface list a discover() call asked for. Absent/empty means
+     * Bluetooth only (v0.2.x compatibility); an unknown entry returns null so
+     * the caller can reject.
+     */
+    private fun requestedInterfaces(call: PluginCall): List<InterfaceType>? {
+        val raw = call.getArray("interfaces") ?: return listOf(InterfaceType.Bluetooth)
+        if (raw.length() == 0) return listOf(InterfaceType.Bluetooth)
+        val resolved = mutableListOf<InterfaceType>()
+        for (i in 0 until raw.length()) {
+            val entry = raw.opt(i) as? String ?: return null
+            resolved.add(interfaceOf(entry) ?: return null)
+        }
+        return resolved.distinct()
     }
 
     // StarIO10's async API returns kotlinx.coroutines.Deferred — run awaits on
@@ -86,9 +126,30 @@ class StarPrinterPlugin : Plugin() {
             if (getPermissionState(LOCATION_ALIAS) == PermissionState.GRANTED) null else LOCATION_ALIAS
     }
 
-    private fun withBluetoothPermission(call: PluginCall, action: () -> Unit) {
+    /**
+     * Gate a call on the runtime permission its INTERFACES actually need.
+     *
+     * USB needs nothing from us: StarIO10 registers its own USB_PERMISSION
+     * BroadcastReceiver + PendingIntent internally, so the SDK drives the
+     * system dialog. Asking for BLUETOOTH_SCAN/CONNECT — or, on API 30,
+     * ACCESS_FINE_LOCATION — for a USB-only call would pop an irrelevant
+     * prompt the operator can refuse, blocking a print for no reason.
+     *
+     * The Bluetooth branch below is unchanged from v0.2.1: Bluetooth Classic
+     * discovery returns ZERO devices without the permission (it does not
+     * error), so a regression here fails silently.
+     */
+    private fun withInterfacePermission(
+        call: PluginCall,
+        interfaces: List<InterfaceType>,
+        action: () -> Unit
+    ) {
         unsupportedOsMessage()?.let {
             call.reject(it)
+            return
+        }
+        if (!interfaces.contains(InterfaceType.Bluetooth)) {
+            action()
             return
         }
         val alias = requiredPermissionAlias()
@@ -108,30 +169,43 @@ class StarPrinterPlugin : Plugin() {
             )
             return
         }
+        // Only ever reached for a Bluetooth-bearing call, but stay total:
+        // re-resolve the interfaces rather than assuming.
         when (call.methodName) {
-            "discover" -> startDiscovery(call)
-            "connect" -> openPrinter(call)
+            "discover" -> startDiscovery(call, requestedInterfaces(call) ?: listOf(InterfaceType.Bluetooth))
+            "connect" -> openPrinter(call, interfaceOf(call.getString("interface")) ?: InterfaceType.Bluetooth)
             else -> call.reject("Unexpected method for permission callback: ${call.methodName}")
         }
     }
 
     @PluginMethod
     fun discover(call: PluginCall) {
-        withBluetoothPermission(call) { startDiscovery(call) }
+        val interfaces = requestedInterfaces(call)
+        if (interfaces == null) {
+            call.reject("interfaces must contain only 'bluetooth' or 'usb'")
+            return
+        }
+        withInterfacePermission(call, interfaces) { startDiscovery(call, interfaces) }
     }
 
-    private fun startDiscovery(call: PluginCall) {
+    private fun startDiscovery(call: PluginCall, interfaces: List<InterfaceType>) {
         try {
             discoveryManager?.stopDiscovery()
 
-            val manager = StarDeviceDiscoveryManagerFactory.create(listOf(InterfaceType.Bluetooth), context)
+            val manager = StarDeviceDiscoveryManagerFactory.create(interfaces, context)
             manager.discoveryTime = call.getInt("timeoutMs") ?: DEFAULT_DISCOVERY_TIMEOUT_MS
             manager.callback = object : StarDeviceDiscoveryManager.Callback {
                 override fun onPrinterFound(printer: StarPrinter) {
+                    val settings = printer.connectionSettings
                     val info = JSObject()
-                    info.put("identifier", printer.connectionSettings.identifier)
+                    info.put("identifier", settings.identifier)
                     info.put("model", printer.information?.model?.toString() ?: "")
-                    info.put("interface", "bluetooth")
+                    info.put("interface", interfaceName(settings.interfaceType))
+                    // USB only: a display hint for a unit that reports no serial
+                    // number (the serial IS the identifier on that interface).
+                    printer.information?.detail?.usb?.portName
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { info.put("portName", it) }
                     notifyListeners("printerFound", info)
                 }
 
@@ -162,19 +236,36 @@ class StarPrinterPlugin : Plugin() {
 
     @PluginMethod
     fun connect(call: PluginCall) {
-        if (call.getString("identifier").isNullOrBlank()) {
+        val iface = interfaceOf(call.getString("interface"))
+        if (iface == null) {
+            call.reject("interface must be 'bluetooth' or 'usb'")
+            return
+        }
+        // A blank identifier is legal on USB ONLY: some TSP100 units report no
+        // USB serial number, and the serial IS the identifier there. Every
+        // other interface still requires one — otherwise a typo'd Bluetooth
+        // config would fall through to FIRST_FOUND_DEVICE and open whichever
+        // paired Star printer answered first.
+        if (iface != InterfaceType.Usb && call.getString("identifier").isNullOrBlank()) {
             call.reject("identifier is required")
             return
         }
-        withBluetoothPermission(call) { openPrinter(call) }
+        withInterfacePermission(call, listOf(iface)) { openPrinter(call, iface) }
     }
 
-    private fun openPrinter(call: PluginCall) {
-        val identifier = call.getString("identifier") ?: return call.reject("identifier is required")
+    private fun openPrinter(call: PluginCall, iface: InterfaceType) {
+        val requested = call.getString("identifier").orEmpty()
+        // Blank USB identifier -> the SDK's own "whatever is plugged in"
+        // sentinel. Only ONE serial-less USB printer is addressable this way.
+        val identifier = if (requested.isBlank() && iface == InterfaceType.Usb) {
+            StarConnectionSettings.FIRST_FOUND_DEVICE
+        } else {
+            requested
+        }
 
         closeCurrentPrinter()
 
-        val settings = StarConnectionSettings(InterfaceType.Bluetooth, identifier)
+        val settings = StarConnectionSettings(iface, identifier)
         val newPrinter = StarPrinter(settings, context)
         newPrinter.printerDelegate = object : PrinterDelegate() {
             override fun onCommunicationError(e: StarIO10Exception) {

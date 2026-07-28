@@ -10,6 +10,9 @@ import StarIO10
 ///   paired accessories (there is no in-app scan on iOS).
 /// - The HOST app must declare `UISupportedExternalAccessoryProtocols` with
 ///   `jp.star-m.starpro` in its Info.plist.
+/// - USB is ANDROID-ONLY. MFi/Lightning makes USB printing non-viable here, so
+///   this side accepts the v0.3.0 `interface` / `interfaces` options and
+///   refuses `usb` rather than gaining a `.usb` case. DO NOT add one.
 @objc(StarPrinterPlugin)
 public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "StarPrinterPlugin"
@@ -34,8 +37,25 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
     private var connected = false
 
     private static let defaultDiscoveryTimeoutMs = 10_000
+    private static let ifaceBluetooth = "bluetooth"
+    private static let ifaceUsb = "usb"
 
     @objc func discover(_ call: CAPPluginCall) {
+        // Accept the v0.3.0 option shape. USB is Android-only, so a USB-ONLY
+        // request resolves with an honest "nothing found" instead of an error:
+        // callers settle their scan on `discoveryFinished`, and rejecting would
+        // surface a spurious failure toast for a platform that simply has no
+        // USB printers to list.
+        let requested = (call.getArray("interfaces") as? [String])?.map { $0.lowercased() }
+            ?? [Self.ifaceBluetooth]
+        if !requested.contains(Self.ifaceBluetooth) {
+            call.resolve()
+            DispatchQueue.main.async { [weak self] in
+                self?.notifyListeners("discoveryFinished", data: [:])
+            }
+            return
+        }
+
         do {
             try discoveryManager?.stopDiscovery()
         } catch {
@@ -85,6 +105,10 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func connect(_ call: CAPPluginCall) {
+        if let iface = call.getString("interface")?.lowercased(), iface == Self.ifaceUsb {
+            call.reject("USB printing is not supported on iOS — use Bluetooth (MFi)")
+            return
+        }
         guard let identifier = call.getString("identifier"), !identifier.isEmpty else {
             call.reject("identifier is required")
             return

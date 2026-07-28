@@ -1,7 +1,7 @@
 {
   "name": "@aybinv7/capacitor-star-printer",
-  "version": "0.2.1",
-  "description": "Minimal Capacitor plugin for Star Micronics printers via the official StarXpand SDK (StarIO10). Bluetooth Classic SPP (Android) + MFi/iAP2 (iOS) transport for TSP100III/TSP650II/mC-Print and other StarPRNT printers.",
+  "version": "0.3.0",
+  "description": "Minimal Capacitor plugin for Star Micronics printers via the official StarXpand SDK (StarIO10). Bluetooth Classic SPP + USB (Android) and MFi/iAP2 (iOS) transports for TSP100III/TSP143U/TSP650II/mC-Print and other StarPRNT printers.",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
@@ -31,6 +31,7 @@
     "tsp100",
     "starprnt",
     "bluetooth",
+    "usb",
     "thermal",
     "printer",
     "android",
