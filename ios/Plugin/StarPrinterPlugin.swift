@@ -13,6 +13,10 @@ import StarIO10
 /// - USB is ANDROID-ONLY. MFi/Lightning makes USB printing non-viable here, so
 ///   this side accepts the v0.3.0 `interface` / `interfaces` options and
 ///   refuses `usb` rather than gaining a `.usb` case. DO NOT add one.
+/// - LAN (v0.4.0) IS supported here: `connect({interface: 'lan'})` with the
+///   printer's IP as the identifier. iOS 14+ pops the system local-network
+///   privacy prompt on first use — the HOST app must declare
+///   `NSLocalNetworkUsageDescription`.
 @objc(StarPrinterPlugin)
 public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "StarPrinterPlugin"
@@ -39,16 +43,25 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
     private static let defaultDiscoveryTimeoutMs = 10_000
     private static let ifaceBluetooth = "bluetooth"
     private static let ifaceUsb = "usb"
+    private static let ifaceLan = "lan"
+
+    /// JS interface name for a StarIO10 interface type (the discovery report).
+    private static func interfaceName(_ type: InterfaceType) -> String {
+        type == .lan ? Self.ifaceLan : Self.ifaceBluetooth
+    }
 
     @objc func discover(_ call: CAPPluginCall) {
-        // Accept the v0.3.0 option shape. USB is Android-only, so a USB-ONLY
-        // request resolves with an honest "nothing found" instead of an error:
-        // callers settle their scan on `discoveryFinished`, and rejecting would
-        // surface a spurious failure toast for a platform that simply has no
-        // USB printers to list.
+        // Accept the v0.3.0 option shape. USB is Android-only, so a request
+        // that resolves to no iOS-scannable interface answers an honest
+        // "nothing found" instead of an error: callers settle their scan on
+        // `discoveryFinished`, and rejecting would surface a spurious failure
+        // toast for a platform that simply has no USB printers to list.
         let requested = (call.getArray("interfaces") as? [String])?.map { $0.lowercased() }
             ?? [Self.ifaceBluetooth]
-        if !requested.contains(Self.ifaceBluetooth) {
+        var interfaceTypes: [InterfaceType] = []
+        if requested.contains(Self.ifaceBluetooth) { interfaceTypes.append(.bluetooth) }
+        if requested.contains(Self.ifaceLan) { interfaceTypes.append(.lan) }
+        if interfaceTypes.isEmpty {
             call.resolve()
             DispatchQueue.main.async { [weak self] in
                 self?.notifyListeners("discoveryFinished", data: [:])
@@ -63,15 +76,15 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         do {
-            let manager = try StarDeviceDiscoveryManagerFactory.create(interfaceTypes: [.bluetooth])
+            let manager = try StarDeviceDiscoveryManagerFactory.create(interfaceTypes: interfaceTypes)
             manager.discoveryTime = call.getInt("timeoutMs") ?? Self.defaultDiscoveryTimeoutMs
 
             let delegate = DiscoveryDelegateBridge(
-                onFound: { [weak self] identifier, model in
+                onFound: { [weak self] identifier, model, interfaceType in
                     self?.notifyListeners("printerFound", data: [
                         "identifier": identifier,
                         "model": model,
-                        "interface": "bluetooth"
+                        "interface": Self.interfaceName(interfaceType)
                     ])
                 },
                 onFinished: { [weak self] in
@@ -105,8 +118,9 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func connect(_ call: CAPPluginCall) {
-        if let iface = call.getString("interface")?.lowercased(), iface == Self.ifaceUsb {
-            call.reject("USB printing is not supported on iOS — use Bluetooth (MFi)")
+        let requestedIface = call.getString("interface")?.lowercased()
+        if requestedIface == Self.ifaceUsb {
+            call.reject("USB printing is not supported on iOS — use Bluetooth (MFi) or LAN")
             return
         }
         guard let identifier = call.getString("identifier"), !identifier.isEmpty else {
@@ -116,7 +130,10 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
 
         closeCurrentPrinter()
 
-        let settings = StarConnectionSettings(interfaceType: .bluetooth, identifier: identifier)
+        // LAN identifier is the printer's IP address; anything else (absent
+        // included) keeps the v0.2.x Bluetooth default.
+        let interfaceType: InterfaceType = requestedIface == Self.ifaceLan ? .lan : .bluetooth
+        let settings = StarConnectionSettings(interfaceType: interfaceType, identifier: identifier)
         let newPrinter = StarPrinter(settings)
         let delegate = PrinterDelegateBridge { [weak self] message in
             self?.notifyListeners("communicationError", data: ["message": message])
@@ -304,10 +321,10 @@ public class StarPrinterPlugin: CAPPlugin, CAPBridgedPlugin {
 }
 
 private final class DiscoveryDelegateBridge: NSObject, StarDeviceDiscoveryManagerDelegate {
-    private let onFound: (String, String) -> Void
+    private let onFound: (String, String, InterfaceType) -> Void
     private let onFinished: () -> Void
 
-    init(onFound: @escaping (String, String) -> Void, onFinished: @escaping () -> Void) {
+    init(onFound: @escaping (String, String, InterfaceType) -> Void, onFinished: @escaping () -> Void) {
         self.onFound = onFound
         self.onFinished = onFinished
     }
@@ -315,7 +332,8 @@ private final class DiscoveryDelegateBridge: NSObject, StarDeviceDiscoveryManage
     func manager(_ manager: StarDeviceDiscoveryManager, didFind printer: StarPrinter) {
         onFound(
             printer.connectionSettings.identifier,
-            printer.information.map { String(describing: $0.model) } ?? ""
+            printer.information.map { String(describing: $0.model) } ?? "",
+            printer.connectionSettings.interfaceType
         )
     }
 

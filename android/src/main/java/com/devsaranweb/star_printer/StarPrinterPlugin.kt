@@ -61,6 +61,7 @@ class StarPrinterPlugin : Plugin() {
         // enum (InterfaceType.toString() is capitalised — "Bluetooth").
         private const val IFACE_BLUETOOTH = "bluetooth"
         private const val IFACE_USB = "usb"
+        private const val IFACE_LAN = "lan"
     }
 
     /**
@@ -73,13 +74,17 @@ class StarPrinterPlugin : Plugin() {
      */
     private fun interfaceOf(value: String?): InterfaceType? = when (value?.lowercase()) {
         IFACE_USB -> InterfaceType.Usb
+        IFACE_LAN -> InterfaceType.Lan
         IFACE_BLUETOOTH, null, "" -> InterfaceType.Bluetooth
         else -> null
     }
 
     /** StarIO10 enum -> JS interface name. See the IFACE_* note above. */
-    private fun interfaceName(type: InterfaceType): String =
-        if (type == InterfaceType.Usb) IFACE_USB else IFACE_BLUETOOTH
+    private fun interfaceName(type: InterfaceType): String = when (type) {
+        InterfaceType.Usb -> IFACE_USB
+        InterfaceType.Lan -> IFACE_LAN
+        else -> IFACE_BLUETOOTH
+    }
 
     /**
      * The interface list a discover() call asked for. Absent/empty means
@@ -182,7 +187,7 @@ class StarPrinterPlugin : Plugin() {
     fun discover(call: PluginCall) {
         val interfaces = requestedInterfaces(call)
         if (interfaces == null) {
-            call.reject("interfaces must contain only 'bluetooth' or 'usb'")
+            call.reject("interfaces must contain only 'bluetooth', 'usb' or 'lan'")
             return
         }
         withInterfacePermission(call, interfaces) { startDiscovery(call, interfaces) }
@@ -238,14 +243,15 @@ class StarPrinterPlugin : Plugin() {
     fun connect(call: PluginCall) {
         val iface = interfaceOf(call.getString("interface"))
         if (iface == null) {
-            call.reject("interface must be 'bluetooth' or 'usb'")
+            call.reject("interface must be 'bluetooth', 'usb' or 'lan'")
             return
         }
         // A blank identifier is legal on USB ONLY: some TSP100 units report no
         // USB serial number, and the serial IS the identifier there. Every
-        // other interface still requires one — otherwise a typo'd Bluetooth
-        // config would fall through to FIRST_FOUND_DEVICE and open whichever
-        // paired Star printer answered first.
+        // other interface still requires one (LAN's identifier is the IP
+        // address) — otherwise a typo'd Bluetooth config would fall through to
+        // FIRST_FOUND_DEVICE and open whichever paired Star printer answered
+        // first.
         if (iface != InterfaceType.Usb && call.getString("identifier").isNullOrBlank()) {
             call.reject("identifier is required")
             return

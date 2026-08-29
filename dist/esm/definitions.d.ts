@@ -5,16 +5,22 @@ import type { PluginListenerHandle } from '@capacitor/core';
  * `usb` is ANDROID-ONLY: the iOS StarXpand SDK has no usable USB interface
  * (MFi/Lightning), so the iOS side accepts the option and refuses it.
  *
+ * `lan` (v0.4.0+) works on BOTH platforms: the identifier is the printer's
+ * IP ADDRESS (e.g. "192.168.1.50" — what StarIO10's `InterfaceType.Lan`
+ * connection settings take). iOS 14+ shows the system local-network privacy
+ * prompt on first use; the HOST app must declare
+ * `NSLocalNetworkUsageDescription` in its Info.plist.
+ *
  * BACKWARD COMPATIBILITY: an OMITTED interface means `bluetooth` everywhere —
  * on the wire and in the native code — so a v0.2.x caller is unaffected.
  */
-export type StarPrinterInterface = 'bluetooth' | 'usb';
+export type StarPrinterInterface = 'bluetooth' | 'usb' | 'lan';
 /**
  * A Star printer found during discovery.
  *
  * `identifier` is opaque to callers: the Bluetooth MAC address (Android
- * Bluetooth), the External Accessory identifier (iOS), or the USB SERIAL
- * NUMBER (Android USB). Pass it back to `connect()`.
+ * Bluetooth), the External Accessory identifier (iOS), the USB SERIAL
+ * NUMBER (Android USB), or the IP address (LAN). Pass it back to `connect()`.
  */
 export interface StarPrinterDeviceInfo {
     /**
@@ -56,9 +62,13 @@ export interface StarPrinterPlugin {
      * iOS: lists MFi printers already paired in Settings > Bluetooth — there is
      * no in-app scan on iOS, and a USB-only request finds nothing.
      *
+     * LAN: StarIO10's own network discovery (UDP broadcast) on both platforms —
+     * only finds printers on the same subnet; manual-IP `connect()` needs no
+     * prior discovery.
+     *
      * @param options.timeoutMs  discovery window in ms (default 10000)
      * @param options.interfaces interfaces to scan (default `['bluetooth']`);
-     *                           `'usb'` is Android-only
+     *                           `'usb'` is Android-only, `'lan'` works everywhere
      */
     discover(options?: {
         timeoutMs?: number;
@@ -73,6 +83,8 @@ export interface StarPrinterPlugin {
      *                           Android-only and is the ONLY interface that
      *                           accepts an empty `identifier` — see
      *                           {@link StarPrinterDeviceInfo.identifier}.
+     *                           `'lan'` takes the printer's IP address as the
+     *                           identifier.
      */
     connect(options: {
         identifier: string;
